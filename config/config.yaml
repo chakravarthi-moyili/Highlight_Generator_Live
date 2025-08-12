@@ -1,0 +1,6 @@
+chunk_duration: 10
+cloudfront_url: https://your-cloudfront-url.cloudfront.net
+highlights_dir: highlights
+job_id: saranyu1
+s3_bucket: your-bucket-name
+stream_url: your-stream-url

@@ -1,0 +1,10 @@
+*.pyc
+__pycache__/
+.env
+__init__.py
+*.pyo
+*.pyd
+/highlights
+*.log
+/highlight_generator
+*$py.class
