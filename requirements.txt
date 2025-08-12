@@ -1,0 +1,10 @@
+python-dotenv
+PyYAML
+moviepy==1.0.3
+openai==1.37.0
+httpx==0.27.2
+fastapi
+uvicorn
+boto3
+openai-whisper
+Pillow
