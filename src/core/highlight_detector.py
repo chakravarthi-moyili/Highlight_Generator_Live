@@ -10,7 +10,7 @@ from src.core.thumbnail import generate_thumbnail
 from src.gpt.openai_client import is_highlight
 from src.utils.s3_utils import CloudStorageClient
 from src.core.config import JOB_ID
-from src.api.endpoints import send_callback_to_server
+from src.api.callback_api import send_callback_to_server
 
 import json
 
