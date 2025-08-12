@@ -5,7 +5,7 @@ import re
 from collections import deque
 from moviepy.editor import *
 from src.core.config import *
-from core.process_video import record_livestream_segment, extract_audio_segment
+from src.core.process_video import record_livestream_segment, extract_audio_segment, fetch_and_save_new_chunks
 from src.core.thumbnail import generate_thumbnail
 from src.gpt.openai_client import is_highlight
 from src.utils.s3_utils import CloudStorageClient
@@ -24,24 +24,38 @@ def transcribe_audio(audio_path):
     return result['text']
 
 def concatenate_highlight(prev_path, curr_path, next_path, title, description):
-    # from moviepy.editor import VideoFileClip, concatenate_videoclips
     global highlight_count
     global job_id
     s3_cloud = CloudStorageClient()
     clips = []
     try:
         if prev_path:
-            prev_clip = VideoFileClip(prev_path).subclip(max(0, CHUNK_DURATION - 10), CHUNK_DURATION)
-            clips.append(prev_clip)
-    except: pass
+            prev_clip_full = VideoFileClip(prev_path)
+            prev_duration = prev_clip_full.duration
+            # Only extract last 10 seconds if possible
+            start = max(0, prev_duration - 10)
+            end = prev_duration
+            if end - start > 0.5:  # Only add if duration is reasonable
+                prev_clip = prev_clip_full.subclip(start, end)
+                clips.append(prev_clip)
+    except Exception as e:
+        print(f"Prev clip error: {e}")
     try:
-        clips.append(VideoFileClip(curr_path))
-    except: pass
+        curr_clip = VideoFileClip(curr_path)
+        clips.append(curr_clip)
+    except Exception as e:
+        print(f"Curr clip error: {e}")
     try:
         if next_path:
-            next_clip = VideoFileClip(next_path).subclip(0, min(10, CHUNK_DURATION))
-            clips.append(next_clip)
-    except: pass
+            next_clip_full = VideoFileClip(next_path)
+            next_duration = next_clip_full.duration
+            # Only extract first 10 seconds if possible
+            end = min(10, next_duration)
+            if end > 0.5:
+                next_clip = next_clip_full.subclip(0, end)
+                clips.append(next_clip)
+    except Exception as e:
+        print(f"Next clip error: {e}")
     if clips:
         final = concatenate_videoclips(clips)
         safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', title.strip()) or "highlight"
@@ -79,37 +93,40 @@ def concatenate_highlight(prev_path, curr_path, next_path, title, description):
 
 def main_loop():
     print("Starting highlight detection...")
-    # s3_cloud = CloudStorageClient()
-    # Clear S3 highlights folder on startup/reset
-    # s3_cloud.delete_prefix(S3_PREFIX)
+    s3_cloud = CloudStorageClient()
+    s3_cloud.delete_old_live_highlights(age_days=180 / 86400)
     total_time = 0
-    video_queue = deque(maxlen=3)
+    video_queue = deque(maxlen=10)  # Increase maxlen to avoid overflow
+    chunk_id = 1
+    last_seen_chunks = []
     try:
         while True:
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_video:
-                record_livestream_segment(tmp_video.name, CHUNK_DURATION)
-                video_queue.append(tmp_video.name)
-                if len(video_queue) < 2:
-                    total_time += CHUNK_DURATION
-                    continue
-                current_chunk_path = video_queue[-2]
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
-                    extract_audio_segment(current_chunk_path, tmp_audio.name, 0, CHUNK_DURATION)
-                    transcript = transcribe_audio(tmp_audio.name)
-                    highlight, title, description = is_highlight(transcript)
-                    if highlight:
-                        if len(video_queue) < 3:
-                            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as next_chunk:
-                                record_livestream_segment(next_chunk.name, CHUNK_DURATION)
-                                video_queue.append(next_chunk.name)
-                        prev_path = video_queue[-3] if len(video_queue) == 3 else None
-                        curr_path = video_queue[-2]
-                        next_path = video_queue[-1] if len(video_queue) == 3 else None
-                        highlight_url, thumbnail_url, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description)
-                        print(f"Highlight detected: {title} ({highlight_url})")
-                    else:
-                        print("No highlight detected.")
-            total_time += CHUNK_DURATION
+            # Download new chunks and add to queue
+            chunk_files, last_seen_chunks, chunk_id = fetch_and_save_new_chunks(STREAM_URL, last_seen_chunks, chunk_id)
+            for tmp_video_path in chunk_files:
+                video_queue.append(tmp_video_path)
+
+            # Process the oldest chunk if enough are available
+            while len(video_queue) >= 3:
+                # Always process the second oldest chunk (center of window)
+                prev_path = video_queue[0]
+                curr_path = video_queue[1]
+                next_path = video_queue[2]
+
+                tmp_audio = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                tmp_audio.close()
+                extract_audio_segment(curr_path, tmp_audio.name, 0, CHUNK_DURATION)
+                transcript = transcribe_audio(tmp_audio.name)
+                highlight, title, description = is_highlight(transcript)
+                if highlight:
+                    highlight_url, thumbnail_url, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description)
+                    print(f"Highlight detected: {title} ({highlight_url})")
+                else:
+                    print("No highlight detected.")
+                total_time += CHUNK_DURATION
+
+                # Remove the oldest chunk (slide window)
+                video_queue.popleft()
             time.sleep(1)
     except KeyboardInterrupt:
         print("Stopped by user.")
