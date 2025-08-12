@@ -10,6 +10,7 @@ from src.core.thumbnail import generate_thumbnail
 from src.gpt.openai_client import is_highlight
 from src.utils.s3_utils import CloudStorageClient
 from src.core.config import JOB_ID
+from src.api.endpoints import send_callback_to_server
 
 import json
 
@@ -88,13 +89,13 @@ def concatenate_highlight(prev_path, curr_path, next_path, title, description):
         print(f"Highlight saved: {highlight_url}")
         print(f"Thumbnail saved: {thumbnail_url}")
         print(f"Metadata saved: {metadata_url}")
-        return highlight_url, thumbnail_url, filename
+        return highlight_url, thumbnail_url, metadata_url, filename
     return None, None, None
 
 def main_loop():
     print("Starting highlight detection...")
     s3_cloud = CloudStorageClient()
-    s3_cloud.delete_old_live_highlights(age_days=180 / 86400)
+    s3_cloud.delete_old_live_highlights(age_days=7)
     total_time = 0
     video_queue = deque(maxlen=10)  # Increase maxlen to avoid overflow
     chunk_id = 1
@@ -119,8 +120,10 @@ def main_loop():
                 transcript = transcribe_audio(tmp_audio.name)
                 highlight, title, description = is_highlight(transcript)
                 if highlight:
-                    highlight_url, thumbnail_url, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description)
+                    highlight_url, thumbnail_url, metadata_url, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description)
                     print(f"Highlight detected: {title} ({highlight_url})")
+                    if highlight_url and thumbnail_url and metadata_url:
+                        send_callback_to_server(job_id, highlight_url, thumbnail_url, metadata_url)
                 else:
                     print("No highlight detected.")
                 total_time += CHUNK_DURATION
