@@ -90,6 +90,15 @@ def concatenate_highlight(prev_path, curr_path, next_path, title, description):
         print(f"Highlight saved: {highlight_url}")
         print(f"Thumbnail saved: {thumbnail_url}")
         print(f"Metadata saved: {metadata_url}")
+
+        # Clean up local files
+        try:
+            os.remove(output_path)
+            os.remove(thumbnail_path)
+            os.remove(metadata_path)
+            print(f"Deleted local files: {output_path}, {thumbnail_path}, {metadata_path}")
+        except Exception as e:
+            print(f"Error deleting local files: {e}")
         return highlight_url, thumbnail_url, metadata_url, filename
     return None, None, None
 

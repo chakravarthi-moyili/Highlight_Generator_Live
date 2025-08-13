@@ -6,7 +6,6 @@ stop_event = Event()
 process = None
 
 def _run_main_loop():
-    import signal
     # Ignore SIGINT in chuld so parent handles it
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     main_loop(stop_event)
