@@ -1,4 +1,5 @@
 import signal
+import sys
 from fastapi import FastAPI
 from src.api.endpoints import router
 import uvicorn
@@ -9,6 +10,7 @@ from src.api.app_controller import stop_detection
 def graceful_shutdown(signum, frame):
     print(f"Received signal {signum}, stopping detection...")
     stop_detection()
+    sys.exit(0)
 
 signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import yaml
 from pathlib import Path
-from src.api.app_controller import start_detection, stop_detection, process, stop_event
+from src.api.app_controller import start_detection, stop_detection, process
 
 router = APIRouter()
 CONFIG_PATH = Path('config/config.yaml')
@@ -41,7 +41,7 @@ async def detect_highlight_endpoint(detector: HighlightDetector):
 
         if detector.start:
             if process and process.is_alive():
-                stop_detection
+                stop_detection()
             start_detection()
             return {"status": "Highlight detection started", "job_id": detector.job_id}
         else:
