@@ -1,5 +1,6 @@
 import tempfile
 import time
+from multiprocessing import Event
 import datetime
 import re
 from collections import deque
@@ -92,7 +93,11 @@ def concatenate_highlight(prev_path, curr_path, next_path, title, description):
         return highlight_url, thumbnail_url, metadata_url, filename
     return None, None, None
 
-def main_loop():
+def main_loop(stop_event: Event = None):
+    own_event = False
+    if stop_event is None:
+        stop_event = Event()
+        own_event = True  #If we run it locally
     print("Starting highlight detection...")
     s3_cloud = CloudStorageClient()
     s3_cloud.delete_old_live_highlights(age_days=7)
@@ -101,7 +106,7 @@ def main_loop():
     chunk_id = 1
     last_seen_chunks = []
     try:
-        while True:
+        while not stop_event.is_set():
             # Download new chunks and add to queue
             chunk_files, last_seen_chunks, chunk_id = fetch_and_save_new_chunks(STREAM_URL, last_seen_chunks, chunk_id)
             for tmp_video_path in chunk_files:
@@ -133,3 +138,7 @@ def main_loop():
             time.sleep(1)
     except KeyboardInterrupt:
         print("Stopped by user.")
+        if own_event:
+            stop_event.set()
+    finally:
+        print("[Highlight Detector] Stopping & Cleaning up...")
