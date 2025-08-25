@@ -16,7 +16,7 @@ from src.api.callback_api import send_callback_to_server
 import json
 
 import whisper
-whisper_model = whisper.load_model("base")
+whisper_model = whisper.load_model("tiny")
 highlight_count = 0
 job_id = JOB_ID
 

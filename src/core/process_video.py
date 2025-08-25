@@ -15,14 +15,17 @@ def fetch_and_save_new_chunks(stream_url, last_seen_chunks, chunk_id_start=1):
     init_segment = None
     segment_urls = []
 
+    # Determine stream type
+    is_fmp4 = False
     for line in lines:
         if line.startswith("#EXT-X-MAP"):
+            is_fmp4 = True
             # Example: #EXT-X-MAP:URI="init.mp4"
             init_segment = line.split("URI=")[1].strip('"')
         elif line and not line.startswith("#") and line.strip().endswith(ACCEPTED_SEGMENT_EXTENSIONS):
             segment_urls.append(line.strip())
 
-    if not init_segment:
+    if is_fmp4 and not init_segment:
         raise ValueError("Init segment (#EXT-X-MAP) not found in playlist.")
 
     # Find new segments
@@ -33,18 +36,34 @@ def fetch_and_save_new_chunks(stream_url, last_seen_chunks, chunk_id_start=1):
     # Base URL (stream_url without the last part)
     base_url = stream_url.rsplit('/', 1)[0]
 
-    for i, seg in enumerate(new_segments):
+    for seg in new_segments:
         print(f"[INFO] Processing segment: {seg}")
-        output_mp4_path = os.path.join(tempfile.gettempdir(), f"chunk{chunk_id}.mp4")
+        ext = os.path.splitext(seg)[1]
 
-        try:
-            # Download init + segment(s) and combine
-            assemble_fmp4_stream(base_url, init_segment, [seg], output_mp4_path)
-            print(f"[CHUNK] Saved as {output_mp4_path}")
-            chunk_files.append(output_mp4_path)
-            chunk_id += 1
-        except Exception as e:
-            print(f"[ERROR] Failed to process segment {seg}: {e}")
+        if is_fmp4 and ext in ('.m4s', '.mp4', '.mkv'):
+            output_path = os.path.join(tempfile.gettempdir(), f"chunk{chunk_id}.mp4")
+            try:
+                # Download init + segment(s) and combine
+                assemble_fmp4_stream(base_url, init_segment, [seg], output_path)
+                print(f"[CHUNK] Saved as {output_path}")
+                chunk_files.append(output_path)
+                chunk_id += 1
+            except Exception as e:
+                print(f"[ERROR] Failed to process segment {seg}: {e}")
+
+        elif not is_fmp4 and ext == '.ts':
+            full_url = urllib.parse.urljoin(base_url + '/', seg)
+            try:
+                r = requests.get(full_url)
+                r.raise_for_status()
+                tmp_file = tempfile.NamedTemporaryFile(suffix=f"_chunk{chunk_id}.ts", delete=False)
+                tmp_file.write(r.content)
+                tmp_file.close()
+                print(f"[CHUNK] Saved as {tmp_file.name}")
+                chunk_files.append(tmp_file.name)
+                chunk_id += 1
+            except Exception as e:
+                print(f"[ERROR] Failed to download segment {seg}: {e}")
 
     return chunk_files, segment_urls, chunk_id
 
