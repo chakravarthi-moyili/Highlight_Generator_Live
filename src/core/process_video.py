@@ -4,6 +4,7 @@ from src.core.config import STREAM_URL, CHUNK_DURATION
 import urllib.parse
 import requests
 import os
+import uuid
 
 ACCEPTED_SEGMENT_EXTENSIONS = ('.ts', '.m4s', '.mp4', '.mkv')
 
@@ -41,7 +42,7 @@ def fetch_and_save_new_chunks(stream_url, last_seen_chunks, chunk_id_start=1):
         ext = os.path.splitext(seg)[1]
 
         if is_fmp4 and ext in ('.m4s', '.mp4', '.mkv'):
-            output_path = os.path.join(tempfile.gettempdir(), f"chunk{chunk_id}.mp4")
+            output_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4().hex}_chunk{chunk_id}.mp4")
             try:
                 # Download init + segment(s) and combine
                 assemble_fmp4_stream(base_url, init_segment, [seg], output_path)
