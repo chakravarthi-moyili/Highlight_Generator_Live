@@ -6,7 +6,7 @@ import re
 from collections import deque
 from moviepy.editor import *
 from src.core.config import *
-from src.core.process_video import record_livestream_segment, extract_audio_segment, fetch_and_save_new_chunks
+from src.core.process_video import extract_audio_segment, fetch_and_save_new_chunks
 from src.core.thumbnail import generate_thumbnail
 from src.gpt.openai_client import is_highlight
 from src.utils.s3_utils import CloudStorageClient
@@ -130,7 +130,7 @@ def main_loop(stop_event: Event = None):
 
                 tmp_audio = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
                 tmp_audio.close()
-                extract_audio_segment(curr_path, tmp_audio.name, 0, CHUNK_DURATION)
+                extract_audio_segment(curr_path, tmp_audio.name, 0)
                 transcript = transcribe_audio(tmp_audio.name)
                 highlight, title, description = is_highlight(transcript)
                 if highlight:
