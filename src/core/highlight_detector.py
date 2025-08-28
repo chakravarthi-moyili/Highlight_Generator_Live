@@ -19,6 +19,7 @@ import subprocess
 
 whisper_model = whisper.load_model("tiny")
 highlight_count = 0
+highlight_data = []
 job_id = JOB_ID
 
 def transcribe_audio(audio_path):
@@ -161,7 +162,11 @@ def main_loop(stop_event: Event = None):
                     highlight_url, thumbnail_url, metadata_url, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description)
                     print(f"Highlight detected: {title} ({highlight_url})")
                     if highlight_url and thumbnail_url and metadata_url:
-                        send_callback_to_server(job_id, highlight_url, thumbnail_url, metadata_url)
+                        highlight_key = f"highlight_{highlight_count}"
+                        highlight_data.append({
+                            highlight_key: [highlight_url, thumbnail_url, metadata_url]
+                        })
+                        send_callback_to_server(job_id, highlight_data)
                 else:
                     print("No highlight detected.")
                 total_time += CHUNK_DURATION

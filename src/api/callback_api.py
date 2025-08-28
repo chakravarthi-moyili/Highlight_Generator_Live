@@ -1,16 +1,14 @@
 import requests
 from fastapi import APIRouter, HTTPException
 
-def send_callback_to_server(job_id: str, highlight_url: str, thumbnail_url: str, metadata_url: str):
+def send_callback_to_server(job_id: str, highlight_data: list):
     callback_url = "http://13.212.112.213:3000/api/callback"
     payload = {
         "service": "highlights",
         "jobId": job_id,
         "status": "completed",
         "data": {
-            "highlight_video": highlight_url,
-            "highlight_thumbnail": thumbnail_url,
-            "highlight_metadata": metadata_url
+            "highlights": highlight_data
         }
     }
     headers = {"Content-Type": "application/json"}
