@@ -167,17 +167,19 @@ def main_loop(stop_event: Event = None):
                     print(f"Highlight detected: {title} ({highlight_url})")
                     if highlight_url and thumbnail_url and metadata_url:
                         highlight_key = f"highlight_{highlight_count}"
+                        callback_data = {
+                            "video_url": highlight_url,
+                            "thumbnail_img": thumbnail_url,
+                            "title": title,
+                            "description": description
+                        }
                         # highlight_data.append({
                         #     highlight_key: [highlight_url, thumbnail_url, title, description]
                         # })
                         highlight_data.append({
-                            highlight_key: {
-                                "video_url": highlight_url,
-                                "thumbnail_img": thumbnail_url,
-                                "title": title,
-                                "description": description
-                            }
+                            highlight_key: callback_data
                         })
+                        print(f"Highlight data to updated: {highlight_data}")
                         send_callback_to_server(job_id, highlight_data)
                 else:
                     print("No highlight detected.")
