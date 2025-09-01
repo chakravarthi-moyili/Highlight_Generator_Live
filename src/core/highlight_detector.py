@@ -132,7 +132,7 @@ def main_loop(stop_event: Event = None):
     if stop_event is None:
         stop_event = Event()
         own_event = True  #If we run it locally
-    print("Starting highlight detection...")
+    print(f"//***************** Starting highlight detection for Job ID: {job_id} *****************//")
     s3_cloud = CloudStorageClient()
     s3_cloud.delete_old_live_highlights(age_days=7)
     total_time = 0
@@ -155,8 +155,12 @@ def main_loop(stop_event: Event = None):
 
                 tmp_audio = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
                 tmp_audio.close()
-                extract_audio_segment(curr_path, tmp_audio.name, 0)
-                transcript = transcribe_audio(tmp_audio.name)
+                wav_audio_path = tmp_audio.name
+                extract_audio_segment(curr_path, wav_audio_path, 0)
+                transcript = transcribe_audio(wav_audio_path)
+                if os.path.exists(wav_audio_path):
+                    os.remove(wav_audio_path)
+                    print(f"Removed temporary audio file: {wav_audio_path}")
                 highlight, title, description = is_highlight(transcript)
                 if highlight:
                     highlight_url, thumbnail_url, metadata_url, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description)
@@ -164,7 +168,7 @@ def main_loop(stop_event: Event = None):
                     if highlight_url and thumbnail_url and metadata_url:
                         highlight_key = f"highlight_{highlight_count}"
                         highlight_data.append({
-                            highlight_key: [highlight_url, thumbnail_url, metadata_url]
+                            highlight_key: [highlight_url, thumbnail_url, title, description]
                         })
                         send_callback_to_server(job_id, highlight_data)
                 else:
@@ -172,7 +176,13 @@ def main_loop(stop_event: Event = None):
                 total_time += CHUNK_DURATION
 
                 # Remove the oldest chunk (slide window)
-                video_queue.popleft()
+                removed_video_path = video_queue.popleft()
+                try:
+                    if os.path.exists(removed_video_path):
+                        os.remove(removed_video_path)
+                except Exception as e:
+                    print(f"Error deleting old chunk {removed_video_path}: {e}")
+
             time.sleep(1)
     except KeyboardInterrupt:
         print("Stopped by user.")
@@ -180,3 +190,12 @@ def main_loop(stop_event: Event = None):
             stop_event.set()
     finally:
         print("[Highlight Detector] Stopping & Cleaning up...")
+        while video_queue:
+            leftover_path = video_queue.popleft()
+            try:
+                if os.path.exists(leftover_path):
+                    os.remove(leftover_path)
+                if os.path.exists(wav_audio_path):
+                    os.remove(wav_audio_path)
+            except Exception as e:
+                print(f"Error deleting chunk {leftover_path}: {e}")
