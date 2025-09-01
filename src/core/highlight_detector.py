@@ -134,7 +134,7 @@ def main_loop(stop_event: Event = None):
         own_event = True  #If we run it locally
     print(f"//***************** Starting highlight detection for Job ID: {job_id} *****************//")
     s3_cloud = CloudStorageClient()
-    s3_cloud.delete_old_live_highlights(age_days=7)
+    # s3_cloud.delete_old_live_highlights(age_days=7)
     total_time = 0
     video_queue = deque(maxlen=10)  # Increase maxlen to avoid overflow
     chunk_id = 1
@@ -167,8 +167,16 @@ def main_loop(stop_event: Event = None):
                     print(f"Highlight detected: {title} ({highlight_url})")
                     if highlight_url and thumbnail_url and metadata_url:
                         highlight_key = f"highlight_{highlight_count}"
+                        # highlight_data.append({
+                        #     highlight_key: [highlight_url, thumbnail_url, title, description]
+                        # })
                         highlight_data.append({
-                            highlight_key: [highlight_url, thumbnail_url, title, description]
+                            highlight_key: {
+                                "video_url": highlight_url,
+                                "thumbnail_img": thumbnail_url,
+                                "title": title,
+                                "description": description
+                            }
                         })
                         send_callback_to_server(job_id, highlight_data)
                 else:
