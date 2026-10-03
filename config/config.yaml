@@ -1,6 +1,6 @@
 chunk_duration: 10
 cloudfront_url: https://your-cloudfront-url.cloudfront.net
 highlights_dir: highlights
-job_id: saranyu1
+job_id: 6ac111aaf77498cd96b36c36
 s3_bucket: your-bucket-name
-stream_url: your-stream-url
+stream_url: https://multiview.apisaranyu.in/srt_hls/streammain/stream.m3u8

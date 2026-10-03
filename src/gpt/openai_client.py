@@ -1,13 +1,15 @@
-import openai
+from openai import OpenAI
 import json
 import yaml
 from pathlib import Path
 import os
 from src.core.config import OPENAI_API_KEY
+from src.core.logging_config import get_logger
 # from src.gpt.prompt_templates.yaml import prompts
 
-openai.api_key = OPENAI_API_KEY
-client = openai
+logger = get_logger(__name__)
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 def open_file(filepath):
     with open(filepath, 'r', encoding='utf-8') as infile:
@@ -38,12 +40,17 @@ def is_highlight(transcript):
             temperature=0.3
         )
         content = response.choices[0].message.content
-        print(f"OpenAI response: {content}")
+        logger.info("OpenAI response: %s", content)
         parsed = json.loads(content)
         return parsed.get("highlight", False), parsed.get("title", ""), parsed.get("description", "")
+    except json.JSONDecodeError as e:
+        # The model occasionally wraps JSON in prose; log what came back so the
+        # cause is visible instead of silently reporting "no highlight".
+        logger.error("OpenAI returned non-JSON content (%s): %r", e, content)
+        return False, "", ""
     except Exception as e:
-        print(f"OpenAI error: {e}")
-        return False, ""
+        logger.error("OpenAI error: %s", e)
+        return False, "", ""
 
 
 

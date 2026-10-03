@@ -1,10 +1,13 @@
 import subprocess
 import tempfile
 from src.core.config import STREAM_URL, CHUNK_DURATION
+from src.core.logging_config import get_logger
 import urllib.parse
 import requests
 import os
 import uuid
+
+logger = get_logger(__name__)
 
 ACCEPTED_SEGMENT_EXTENSIONS = ('.ts', '.m4s', '.mp4', '.mkv')
 
@@ -38,7 +41,7 @@ def fetch_and_save_new_chunks(stream_url, last_seen_chunks, chunk_id_start=1):
     base_url = stream_url.rsplit('/', 1)[0]
 
     for seg in new_segments:
-        print(f"[INFO] Processing segment: {seg}")
+        logger.debug("Processing segment: %s", seg)
         ext = os.path.splitext(seg)[1]
 
         if is_fmp4 and ext in ('.m4s', '.mp4', '.mkv'):
@@ -46,11 +49,11 @@ def fetch_and_save_new_chunks(stream_url, last_seen_chunks, chunk_id_start=1):
             try:
                 # Download init + segment(s) and combine
                 assemble_fmp4_stream(base_url, init_segment, [seg], output_path)
-                print(f"[CHUNK] Saved as {output_path}")
+                logger.debug("[CHUNK] Saved as %s", output_path)
                 chunk_files.append(output_path)
                 chunk_id += 1
             except Exception as e:
-                print(f"[ERROR] Failed to process segment {seg}: {e}")
+                logger.error("Failed to process segment %s: %s", seg, e)
 
         elif not is_fmp4 and ext == '.ts':
             full_url = urllib.parse.urljoin(base_url + '/', seg)
@@ -60,11 +63,11 @@ def fetch_and_save_new_chunks(stream_url, last_seen_chunks, chunk_id_start=1):
                 tmp_file = tempfile.NamedTemporaryFile(suffix=f"_chunk{chunk_id}.ts", delete=False)
                 tmp_file.write(r.content)
                 tmp_file.close()
-                print(f"[CHUNK] Saved as {tmp_file.name}")
+                logger.debug("[CHUNK] Saved as %s", tmp_file.name)
                 chunk_files.append(tmp_file.name)
                 chunk_id += 1
             except Exception as e:
-                print(f"[ERROR] Failed to download segment {seg}: {e}")
+                logger.error("Failed to download segment %s: %s", seg, e)
 
     return chunk_files, segment_urls, chunk_id
 

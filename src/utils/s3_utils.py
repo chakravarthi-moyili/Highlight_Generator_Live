@@ -3,6 +3,9 @@ from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 import os
 import time
 from src.core.config import S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET_NAME, S3_REGION,S3_PREFIX, CLOUDFRONT_URL
+from src.core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 class CloudStorageClient:
     def __init__(self):
@@ -62,13 +65,23 @@ class CloudStorageClient:
 
             try:
                 timestamp = str(int(time.time()))
-                self.s3_client.upload_file(file_path, self.bucket_name, s3_key, ExtraArgs={'Tagging': f"Created={timestamp}&ManagedBy=LiveHighlights"})
-                print(f"File {file_path} uploaded to {self.bucket_name}/{s3_key}.")
+                self.s3_client.upload_file(file_path, self.bucket_name, s3_key)
+                self.s3_client.put_object_tagging(
+                    Bucket=self.bucket_name,
+                    Key=s3_key,
+                    Tagging={'TagSet': [
+                        {'Key': 'Created', 'Value': timestamp},
+                        {'Key': 'ManagedBy', 'Value': 'LiveHighlights'}
+                    ]}
+                )
+                logger.info("File %s uploaded to %s/%s.", file_path, self.bucket_name, s3_key)
                 return f"{self.cloudfront_url}/{s3_key}"
-            except NoCredentialsError:
-                raise NoCredentialsError("AWS credentials not available.")
-            except PartialCredentialsError:
-                raise PartialCredentialsError("Incomplete AWS credentials provided.")
+            except (NoCredentialsError, PartialCredentialsError):
+                # These botocore errors take keyword args only, so re-raising them
+                # with a message (NoCredentialsError("...")) raised TypeError and
+                # masked the real credentials problem. Log and re-raise as-is.
+                logger.exception("AWS credentials unavailable or incomplete while uploading %s", file_path)
+                raise
 
     def delete_old_live_highlights(self, age_days):
         """
@@ -93,32 +106,32 @@ class CloudStorageClient:
                     
                     managed_by = tags.get('ManagedBy')
                     if tags.get('ManagedBy') != 'LiveHighlights':
-                        print(f"Skipping {key}, ManagedBy tag is '{managed_by}'")
+                        logger.debug("Skipping %s, ManagedBy tag is %r", key, managed_by)
                         continue
                     
                     created_str = tags.get('Created')
                     if not created_str:
-                        print(f"Skipping {key}, no 'Created' tag found")
+                        logger.debug("Skipping %s, no 'Created' tag found", key)
                         continue
                     
                     try:
                         created_time = int(created_str)
                     except ValueError:
-                        print(f"Skipping {key}, invalid 'Created' tag value: {created_str}")
+                        logger.warning("Skipping %s, invalid 'Created' tag value: %s", key, created_str)
                         continue
                     
-                    print(f"Checking {key}: created_time={created_time}, cutoff={cutoff}")
+                    logger.debug("Checking %s: created_time=%s, cutoff=%s", key, created_time, cutoff)
                     if created_time < cutoff:
                         self.s3_client.delete_object(Bucket=self.bucket_name, Key=key)
-                        print(f"Deleted: {key}")
+                        logger.info("Deleted: %s", key)
                         deleted += 1
                     else:
-                        print(f"Keeping {key}, not old enough")
+                        logger.debug("Keeping %s, not old enough", key)
                 
                 except Exception as e:
-                    print(f"Skipping {key} due to error: {e}")
+                    logger.error("Skipping %s due to error: %s", key, e)
 
-        print(f"Deleted {deleted} expired live-highlight objects.")
+        logger.info("Deleted %s expired live-highlight objects.", deleted)
 
       
     # def delete_prefix(self, prefix):

@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 import yaml
 
-load_dotenv()
+load_dotenv(override=True)
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), '../../config/config.yaml')
 
