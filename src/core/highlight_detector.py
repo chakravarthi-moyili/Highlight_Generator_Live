@@ -201,16 +201,14 @@ def main_loop(stop_event: Event = None, job_id: str = None, stream_url: str = No
     logger.info("//***************** Starting highlight detection for Job ID: %s *****************//", job_id)
     s3_cloud = CloudStorageClient()
 
-    # Optional: Clean up old highlights (with timeout to prevent startup blocking)
-    # This runs synchronously but with a 30-second timeout
-    try:
-        result = s3_cloud.delete_old_live_highlights(age_days=7, timeout_seconds=30)
-        if result >= 0:
-            logger.info("S3 cleanup completed: deleted %d old objects", result)
-        else:
-            logger.warning("S3 cleanup failed or timed out, continuing without cleanup")
-    except Exception as e:
-        logger.warning("S3 cleanup encountered error: %s, continuing without cleanup", e)
+    # S3 cleanup disabled: not mandatory for operation
+    # (can cause timeout issues on slow networks)
+    # Uncomment below if needed in future:
+    # try:
+    #     result = s3_cloud.delete_old_live_highlights(age_days=7, timeout_seconds=30)
+    #     logger.info("S3 cleanup: deleted %d objects", result if result >= 0 else 0)
+    # except Exception as e:
+    #     logger.warning("S3 cleanup error: %s", e)
 
     total_time = 0
     video_queue = deque(maxlen=10)  # Increase maxlen to avoid overflow
