@@ -1,6 +1,7 @@
 import boto3
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError, EndpointConnectionError
 from botocore.config import Config
+from boto3.s3.transfer import TransferConfig
 import os
 import time
 from src.core.config import S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET_NAME, S3_REGION,S3_PREFIX, CLOUDFRONT_URL
@@ -23,25 +24,35 @@ class CloudStorageClient:
         if not self.s3_access_key or not self.s3_secret_key or not self.bucket_name or not self.cloudfront_url:
             raise ValueError("S3 credentials or bucket name not set in environment variables.")
 
-        # Configure boto3 with longer timeouts for large file uploads
-        config = Config(
-            connect_timeout=30,           # Connection timeout: 30 seconds
-            read_timeout=300,             # Read timeout: 5 minutes (for large files)
-            retries={'max_attempts': 3},  # Retry up to 3 times
-            max_pool_connections=10
+        # Few concurrent sockets, large parts: a highlight is tens of MB, and
+        # fanning it across 10 parallel TLS connections (the boto3 default) is
+        # what produced "UNEXPECTED_EOF_WHILE_READING" - one socket dropped by
+        # the network fails the whole upload.
+        self.transfer_config = TransferConfig(
+            multipart_threshold=64 * 1024 * 1024,
+            multipart_chunksize=16 * 1024 * 1024,
+            max_concurrency=2,
+            use_threads=True,
         )
 
-        self.s3_client = boto3.client(
+        self.s3_client = self._build_client()
+
+    def _build_client(self):
+        """Create an S3 client with its own connection pool."""
+        config = Config(
+            connect_timeout=60,
+            read_timeout=600,
+            retries={'max_attempts': 5, 'mode': 'adaptive'},
+            max_pool_connections=10,
+            tcp_keepalive=True,
+        )
+        return boto3.client(
             's3',
             aws_access_key_id=self.s3_access_key,
             aws_secret_access_key=self.s3_secret_key,
             region_name=self.region,
-            config=config
+            config=config,
         )
-
-        # Configure multipart upload for large files
-        self.multipart_threshold = 100 * 1024 * 1024  # 100 MB
-        self.multipart_chunksize = 50 * 1024 * 1024   # 50 MB chunks
     # def upload_to_s3(self, file_path, s3_key):
     #         """
     #         Uploads a file to the specified S3 bucket.
@@ -87,12 +98,11 @@ class CloudStorageClient:
                     logger.info("Uploading %s to S3 (%.2f MB, attempt %d/%d)...",
                               file_path, file_size_mb, attempt, max_retries)
 
-                    # Upload using configured S3 client
-                    # (already has optimized timeout settings)
                     self.s3_client.upload_file(
                         file_path,
                         self.bucket_name,
-                        s3_key
+                        s3_key,
+                        Config=self.transfer_config
                     )
 
                     logger.info("File %s uploaded successfully (%.2f MB)", file_path, file_size_mb)
@@ -130,9 +140,12 @@ class CloudStorageClient:
                         raise
                     else:
                         wait_time = 2 ** (attempt - 1)  # Exponential backoff: 1s, 2s, 4s
-                        logger.warning("Upload attempt %d failed: %s. Retrying in %d seconds...",
-                                     attempt, error_type, wait_time)
+                        logger.warning("Upload attempt %d failed: %s: %s. Retrying in %d seconds...",
+                                     attempt, error_type, error_msg, wait_time)
                         time.sleep(wait_time)
+                        # A dropped TLS socket stays in the pool, so retrying on
+                        # the same client just reuses the dead connection.
+                        self.s3_client = self._build_client()
 
     def delete_old_live_highlights(self, age_days, timeout_seconds=30):
         """
