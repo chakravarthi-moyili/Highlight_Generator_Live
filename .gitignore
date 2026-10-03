@@ -1,9 +1,58 @@
-*.pyc
+# --- Python ---
 __pycache__/
-.env
-*.pyo
-*.pyd
-/highlights
-*.log
-/highlight_generator
+*.py[cod]
 *$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Virtualenvs ---
+# live-highlights/ is this project's venv (5.3GB, ~19k files) and was flooding
+# `git status`. The bare names catch it and any future venv rename; pyvenv.cfg
+# catches one created under a name not listed here.
+live-highlights/
+highlight_generator/
+venv/
+.venv/
+env/
+.env/
+ENV/
+pyvenv.cfg
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Generated media & working output ---
+# Highlights are uploaded to S3 and deleted locally, but a crash mid-run leaves
+# them behind.
+highlights/
+*.mp4
+*.mp3
+*.wav
+*.jpg
+*.jpeg
+*.png
+*.ts
+*.m3u8
+
+# MoviePy writes its temp audio into the CWD, not a temp dir, which is where the
+# stray *TEMP_MPY_wvf_snd.* files in the repo root came from.
+*TEMP_MPY_*
+
+# --- Editor / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
