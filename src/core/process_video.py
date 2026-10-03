@@ -15,6 +15,25 @@ def fetch_and_save_new_chunks(stream_url, last_seen_chunks, chunk_id_start=1):
     response = requests.get(stream_url)
     lines = response.text.splitlines()
 
+    # Check for variant playlist (multiple stream qualities)
+    stream_info_lines = [i for i, line in enumerate(lines) if line.startswith("#EXT-X-STREAM-INF")]
+    if stream_info_lines:
+        # Find 1080p stream
+        for idx in stream_info_lines:
+            if "RESOLUTION=1920x1080" in lines[idx]:
+                next_line = lines[idx + 1].strip()
+                # If relative URL, join with base
+                if not next_line.startswith("http"):
+                    base_url = stream_url.rsplit('/', 1)[0]
+                    stream_url = urllib.parse.urljoin(base_url + '/', next_line)
+                else:
+                    stream_url = next_line
+                # Fetch the actual media playlist
+                print(f"[INFO] Found 1080p stream: {stream_url}")
+                response = requests.get(stream_url)
+                lines = response.text.splitlines()
+                break
+
     # Extract init segment and media segments
     init_segment = None
     segment_urls = []
