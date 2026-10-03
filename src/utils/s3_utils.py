@@ -1,5 +1,6 @@
 import boto3
-from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+from botocore.exceptions import NoCredentialsError, PartialCredentialsError, EndpointConnectionError
+from botocore.config import Config
 import os
 import time
 from src.core.config import S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET_NAME, S3_REGION,S3_PREFIX, CLOUDFRONT_URL
@@ -10,8 +11,7 @@ logger = get_logger(__name__)
 class CloudStorageClient:
     def __init__(self):
         """
-        Initializes the S3Uploader instance by reading credentials and configuration
-        from environment variables.
+        Initializes the S3 client with optimized timeout configuration for large file uploads.
         """
         self.s3_access_key = S3_ACCESS_KEY
         self.s3_secret_key = S3_SECRET_KEY
@@ -23,11 +23,25 @@ class CloudStorageClient:
         if not self.s3_access_key or not self.s3_secret_key or not self.bucket_name or not self.cloudfront_url:
             raise ValueError("S3 credentials or bucket name not set in environment variables.")
 
+        # Configure boto3 with longer timeouts for large file uploads
+        config = Config(
+            connect_timeout=30,           # Connection timeout: 30 seconds
+            read_timeout=300,             # Read timeout: 5 minutes (for large files)
+            retries={'max_attempts': 3},  # Retry up to 3 times
+            max_pool_connections=10
+        )
+
         self.s3_client = boto3.client(
             's3',
             aws_access_key_id=self.s3_access_key,
-            aws_secret_access_key=self.s3_secret_key
+            aws_secret_access_key=self.s3_secret_key,
+            region_name=self.region,
+            config=config
         )
+
+        # Configure multipart upload for large files
+        self.multipart_threshold = 100 * 1024 * 1024  # 100 MB
+        self.multipart_chunksize = 50 * 1024 * 1024   # 50 MB chunks
     # def upload_to_s3(self, file_path, s3_key):
     #         """
     #         Uploads a file to the specified S3 bucket.
@@ -53,6 +67,7 @@ class CloudStorageClient:
     def upload_to_s3(self, file_path, s3_key, max_retries=3):
             """
             Uploads a file to the specified S3 bucket with retry logic.
+            Automatically uses multipart upload for large files.
 
             :param file_path: Local path to the file to be uploaded.
             :param s3_key: The key under which the file will be stored in S3.
@@ -63,29 +78,41 @@ class CloudStorageClient:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"The file {file_path} does not exist.")
 
+            file_size = os.path.getsize(file_path)
+            file_size_mb = file_size / (1024 * 1024)
             timestamp = str(int(time.time()))
 
             for attempt in range(1, max_retries + 1):
                 try:
-                    logger.info("Uploading %s to S3 (attempt %d/%d)...", file_path, attempt, max_retries)
-                    self.s3_client.upload_file(file_path, self.bucket_name, s3_key)
+                    logger.info("Uploading %s to S3 (%.2f MB, attempt %d/%d)...",
+                              file_path, file_size_mb, attempt, max_retries)
 
-                    # Tag the object
+                    # Upload using configured S3 client
+                    # (already has optimized timeout settings)
+                    self.s3_client.upload_file(
+                        file_path,
+                        self.bucket_name,
+                        s3_key
+                    )
+
+                    logger.info("File %s uploaded successfully (%.2f MB)", file_path, file_size_mb)
+
+                    # Tag the object (non-blocking if fails)
                     try:
                         self.s3_client.put_object_tagging(
                             Bucket=self.bucket_name,
                             Key=s3_key,
                             Tagging={'TagSet': [
                                 {'Key': 'Created', 'Value': timestamp},
-                                {'Key': 'ManagedBy', 'Value': 'LiveHighlights'}
+                                {'Key': 'ManagedBy', 'Value': 'LiveHighlights'},
+                                {'Key': 'FileSize', 'Value': str(int(file_size_mb))}
                             ]}
                         )
                     except Exception as e:
                         logger.warning("Failed to tag S3 object %s: %s", s3_key, e)
-                        # Continue - tagging failure shouldn't block upload success
 
                     url = f"{self.cloudfront_url}/{s3_key}"
-                    logger.info("File %s uploaded to %s/%s. CloudFront: %s", file_path, self.bucket_name, s3_key, url)
+                    logger.info("CloudFront URL: %s", url)
                     return url
 
                 except (NoCredentialsError, PartialCredentialsError) as e:
@@ -94,15 +121,17 @@ class CloudStorageClient:
 
                 except Exception as e:
                     is_last_attempt = attempt == max_retries
-                    error_msg = f"{type(e).__name__}: {str(e)}"
+                    error_type = type(e).__name__
+                    error_msg = str(e)[:100]
 
                     if is_last_attempt:
-                        logger.error("Upload failed after %d attempts: %s", max_retries, error_msg)
+                        logger.error("Upload FAILED after %d attempts: %s - %s",
+                                   max_retries, error_type, error_msg)
                         raise
                     else:
                         wait_time = 2 ** (attempt - 1)  # Exponential backoff: 1s, 2s, 4s
                         logger.warning("Upload attempt %d failed: %s. Retrying in %d seconds...",
-                                     attempt, error_msg, wait_time)
+                                     attempt, error_type, wait_time)
                         time.sleep(wait_time)
 
     def delete_old_live_highlights(self, age_days, timeout_seconds=30):
