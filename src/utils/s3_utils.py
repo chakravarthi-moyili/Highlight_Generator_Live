@@ -83,55 +83,79 @@ class CloudStorageClient:
                 logger.exception("AWS credentials unavailable or incomplete while uploading %s", file_path)
                 raise
 
-    def delete_old_live_highlights(self, age_days):
+    def delete_old_live_highlights(self, age_days, timeout_seconds=30):
         """
         Deletes objects under live-highlights/ prefix that are older than `age_days`,
         based on S3 object tagging.
+
+        Args:
+            age_days: Number of days to keep (delete older than this)
+            timeout_seconds: Max seconds to spend on this operation (default: 30s)
+
+        Returns:
+            int: Number of objects deleted, or -1 if operation timed out
         """
         prefix = self.s3_prefix
         now = int(time.time())
         cutoff = now - int(age_days * 86400)
-        
-        paginator = self.s3_client.get_paginator('list_objects_v2')
-        deleted = 0
+        start_time = time.time()
 
-        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
-            contents = page.get('Contents', [])
-            
-            for obj in contents:
-                key = obj['Key']
-                try:
-                    tagging = self.s3_client.get_object_tagging(Bucket=self.bucket_name, Key=key)
-                    tags = {tag['Key']: tag['Value'] for tag in tagging['TagSet']}
-                    
-                    managed_by = tags.get('ManagedBy')
-                    if tags.get('ManagedBy') != 'LiveHighlights':
-                        logger.debug("Skipping %s, ManagedBy tag is %r", key, managed_by)
-                        continue
-                    
-                    created_str = tags.get('Created')
-                    if not created_str:
-                        logger.debug("Skipping %s, no 'Created' tag found", key)
-                        continue
-                    
+        try:
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            deleted = 0
+
+            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+                # Check timeout after each page
+                if time.time() - start_time > timeout_seconds:
+                    logger.warning("S3 cleanup timed out after %d seconds, processed %d deletions", timeout_seconds, deleted)
+                    return deleted
+
+                contents = page.get('Contents', [])
+
+                for obj in contents:
+                    # Check timeout for each object too
+                    if time.time() - start_time > timeout_seconds:
+                        logger.warning("S3 cleanup timed out after %d seconds, processed %d deletions", timeout_seconds, deleted)
+                        return deleted
+
+                    key = obj['Key']
                     try:
-                        created_time = int(created_str)
-                    except ValueError:
-                        logger.warning("Skipping %s, invalid 'Created' tag value: %s", key, created_str)
-                        continue
-                    
-                    logger.debug("Checking %s: created_time=%s, cutoff=%s", key, created_time, cutoff)
-                    if created_time < cutoff:
-                        self.s3_client.delete_object(Bucket=self.bucket_name, Key=key)
-                        logger.info("Deleted: %s", key)
-                        deleted += 1
-                    else:
-                        logger.debug("Keeping %s, not old enough", key)
-                
-                except Exception as e:
-                    logger.error("Skipping %s due to error: %s", key, e)
+                        tagging = self.s3_client.get_object_tagging(Bucket=self.bucket_name, Key=key)
+                        tags = {tag['Key']: tag['Value'] for tag in tagging['TagSet']}
 
-        logger.info("Deleted %s expired live-highlight objects.", deleted)
+                        managed_by = tags.get('ManagedBy')
+                        if tags.get('ManagedBy') != 'LiveHighlights':
+                            logger.debug("Skipping %s, ManagedBy tag is %r", key, managed_by)
+                            continue
+
+                        created_str = tags.get('Created')
+                        if not created_str:
+                            logger.debug("Skipping %s, no 'Created' tag found", key)
+                            continue
+
+                        try:
+                            created_time = int(created_str)
+                        except ValueError:
+                            logger.warning("Skipping %s, invalid 'Created' tag value: %s", key, created_str)
+                            continue
+
+                        logger.debug("Checking %s: created_time=%s, cutoff=%s", key, created_time, cutoff)
+                        if created_time < cutoff:
+                            self.s3_client.delete_object(Bucket=self.bucket_name, Key=key)
+                            logger.info("Deleted: %s", key)
+                            deleted += 1
+                        else:
+                            logger.debug("Keeping %s, not old enough", key)
+
+                    except Exception as e:
+                        logger.error("Skipping %s due to error: %s", key, e)
+
+            logger.info("Deleted %s expired live-highlight objects.", deleted)
+            return deleted
+
+        except Exception as e:
+            logger.error("Error during S3 cleanup: %s. Continuing without cleanup.", e)
+            return -1
 
       
     # def delete_prefix(self, prefix):
