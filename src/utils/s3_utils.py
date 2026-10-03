@@ -50,38 +50,60 @@ class CloudStorageClient:
     #         except PartialCredentialsError:
     #             raise PartialCredentialsError("Incomplete AWS credentials provided.")
             
-    def upload_to_s3(self, file_path, s3_key):
+    def upload_to_s3(self, file_path, s3_key, max_retries=3):
             """
-            Uploads a file to the specified S3 bucket.
+            Uploads a file to the specified S3 bucket with retry logic.
 
             :param file_path: Local path to the file to be uploaded.
             :param s3_key: The key under which the file will be stored in S3.
+            :param max_retries: Number of retry attempts (default: 3)
             :raises FileNotFoundError: If the file does not exist.
             :raises NoCredentialsError: If AWS credentials are not available.
-            :raises PartialCredentialsError: If incomplete AWS credentials are provided.
             """
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"The file {file_path} does not exist.")
 
-            try:
-                timestamp = str(int(time.time()))
-                self.s3_client.upload_file(file_path, self.bucket_name, s3_key)
-                self.s3_client.put_object_tagging(
-                    Bucket=self.bucket_name,
-                    Key=s3_key,
-                    Tagging={'TagSet': [
-                        {'Key': 'Created', 'Value': timestamp},
-                        {'Key': 'ManagedBy', 'Value': 'LiveHighlights'}
-                    ]}
-                )
-                logger.info("File %s uploaded to %s/%s.", file_path, self.bucket_name, s3_key)
-                return f"{self.cloudfront_url}/{s3_key}"
-            except (NoCredentialsError, PartialCredentialsError):
-                # These botocore errors take keyword args only, so re-raising them
-                # with a message (NoCredentialsError("...")) raised TypeError and
-                # masked the real credentials problem. Log and re-raise as-is.
-                logger.exception("AWS credentials unavailable or incomplete while uploading %s", file_path)
-                raise
+            timestamp = str(int(time.time()))
+
+            for attempt in range(1, max_retries + 1):
+                try:
+                    logger.info("Uploading %s to S3 (attempt %d/%d)...", file_path, attempt, max_retries)
+                    self.s3_client.upload_file(file_path, self.bucket_name, s3_key)
+
+                    # Tag the object
+                    try:
+                        self.s3_client.put_object_tagging(
+                            Bucket=self.bucket_name,
+                            Key=s3_key,
+                            Tagging={'TagSet': [
+                                {'Key': 'Created', 'Value': timestamp},
+                                {'Key': 'ManagedBy', 'Value': 'LiveHighlights'}
+                            ]}
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to tag S3 object %s: %s", s3_key, e)
+                        # Continue - tagging failure shouldn't block upload success
+
+                    url = f"{self.cloudfront_url}/{s3_key}"
+                    logger.info("File %s uploaded to %s/%s. CloudFront: %s", file_path, self.bucket_name, s3_key, url)
+                    return url
+
+                except (NoCredentialsError, PartialCredentialsError) as e:
+                    logger.exception("AWS credentials unavailable or incomplete while uploading %s", file_path)
+                    raise
+
+                except Exception as e:
+                    is_last_attempt = attempt == max_retries
+                    error_msg = f"{type(e).__name__}: {str(e)}"
+
+                    if is_last_attempt:
+                        logger.error("Upload failed after %d attempts: %s", max_retries, error_msg)
+                        raise
+                    else:
+                        wait_time = 2 ** (attempt - 1)  # Exponential backoff: 1s, 2s, 4s
+                        logger.warning("Upload attempt %d failed: %s. Retrying in %d seconds...",
+                                     attempt, error_msg, wait_time)
+                        time.sleep(wait_time)
 
     def delete_old_live_highlights(self, age_days, timeout_seconds=30):
         """

@@ -145,33 +145,44 @@ def concatenate_highlight(prev_path, curr_path, next_path, title, description, j
         highlight_count += 1
         highlight_folder = f"{S3_PREFIX}/{job_id}/highlights_{highlight_count}"
         s3_key = f"{highlight_folder}/{filename}"
-        logger.info("Uploading highlight to S3: %s", s3_key)
-        highlight_url = s3_cloud.upload_to_s3(output_path, s3_key)
-        thumbnail_url = s3_cloud.upload_to_s3(thumbnail_path, s3_key.replace('.mp4', '.jpg'))
 
-        metadata = {
-            "title": title,
-            "description": description,
-            "timestamp": timestamp,
-        }
-        metadata_path = output_path.replace('.mp4', '.json')
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f)
-        metadata_s3_key = s3_key.replace('.mp4', '.json')
-        metadata_url = s3_cloud.upload_to_s3(metadata_path, metadata_s3_key)
-        logger.info("Highlight saved: %s", highlight_url)
-        logger.info("Thumbnail saved: %s", thumbnail_url)
-        logger.info("Metadata saved: %s", metadata_url)
-
+        # Upload with error handling - don't crash on S3 timeout
         try:
-            os.remove(output_path)
-            os.remove(thumbnail_path)
-            os.remove(metadata_path)
-            logger.info("Deleted local files: %s, %s, %s", output_path, thumbnail_path, metadata_path)
-        except Exception as e:
-            logger.error("Error deleting local files: %s", e)
+            logger.info("Uploading highlight to S3: %s", s3_key)
+            highlight_url = s3_cloud.upload_to_s3(output_path, s3_key)
+            thumbnail_url = s3_cloud.upload_to_s3(thumbnail_path, s3_key.replace('.mp4', '.jpg'))
 
-        return highlight_url, thumbnail_url, metadata_url, filename
+            metadata = {
+                "title": title,
+                "description": description,
+                "timestamp": timestamp,
+            }
+            metadata_path = output_path.replace('.mp4', '.json')
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f)
+            metadata_s3_key = s3_key.replace('.mp4', '.json')
+            metadata_url = s3_cloud.upload_to_s3(metadata_path, metadata_s3_key)
+
+            logger.info("Highlight saved: %s", highlight_url)
+            logger.info("Thumbnail saved: %s", thumbnail_url)
+            logger.info("Metadata saved: %s", metadata_url)
+
+            # Cleanup local files only if upload succeeded
+            try:
+                os.remove(output_path)
+                os.remove(thumbnail_path)
+                os.remove(metadata_path)
+                logger.info("Deleted local files: %s, %s, %s", output_path, thumbnail_path, metadata_path)
+            except Exception as e:
+                logger.error("Error deleting local files: %s", e)
+
+            return highlight_url, thumbnail_url, metadata_url, filename
+
+        except Exception as e:
+            # S3 upload failed - log error but keep processing
+            logger.error("Failed to upload highlight to S3: %s. Continuing with next chunk.", e)
+            # Return None tuple to indicate failure
+            return None, None, None, None
 
     # Must match the 4-tuple above: the caller unpacks four names, so returning a
     # 3-tuple here raised "not enough values to unpack" whenever no usable
@@ -252,8 +263,8 @@ def main_loop(stop_event: Event = None, job_id: str = None, stream_url: str = No
                 highlight, title, description = is_highlight(transcript)
                 if highlight:
                     highlight_url, thumbnail_url, metadata_url, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description, job_id)
-                    logger.info("Highlight detected: %s (%s)", title, highlight_url)
                     if highlight_url and thumbnail_url and metadata_url:
+                        logger.info("Highlight detected and uploaded: %s (%s)", title, highlight_url)
                         highlight_key = f"highlight_{highlight_count}"
                         callback_data = {
                             "video_url": highlight_url,
@@ -261,14 +272,13 @@ def main_loop(stop_event: Event = None, job_id: str = None, stream_url: str = No
                             "title": title,
                             "description": description
                         }
-                        # highlight_data.append({
-                        #     highlight_key: [highlight_url, thumbnail_url, title, description]
-                        # })
                         highlight_data.append({
                             highlight_key: callback_data
                         })
-                        logger.info("Highlight data to updated: %s", highlight_data)
+                        logger.info("Highlight data updated: %s", highlight_data)
                         send_callback_to_server(job_id, highlight_data)
+                    else:
+                        logger.warning("Highlight detected but S3 upload failed: %s. Skipping callback.", title)
                 else:
                     logger.info("No highlight detected.")
                 total_time += CHUNK_DURATION
