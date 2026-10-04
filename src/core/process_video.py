@@ -126,11 +126,14 @@ def assemble_fmp4_stream(base_url, init_filename, segment_filenames, output_file
     for p in segment_paths:
         os.unlink(p)
 def extract_audio_segment(video_path, output_audio_path, start_time=0):
+    # -nostdin / stdin=DEVNULL: ffmpeg otherwise reads the terminal for keypresses,
+    # and when the server runs in the background that read raises SIGTTIN, which
+    # stops the whole process group (API server included) until resumed.
     cmd = [
-        "ffmpeg", "-y", "-i", video_path,
+        "ffmpeg", "-nostdin", "-y", "-i", video_path,
         "-ss", str(start_time),
         "-vn", "-acodec", "pcm_s16le",
         "-ar", "16000", "-ac", "1",
         output_audio_path
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

@@ -9,7 +9,6 @@ from src.core.config import *
 from src.core.process_video import extract_audio_segment, fetch_and_save_new_chunks
 from src.core.thumbnail import generate_thumbnail
 from src.gpt.openai_client import is_highlight
-from src.utils.s3_utils import CloudStorageClient
 from src.core.config import JOB_ID
 from src.api.callback_api import send_callback_to_server
 import json
@@ -83,7 +82,6 @@ def _trim_clip(input_path, output_path, start=None, end=None):
 
 def concatenate_highlight(prev_path, curr_path, next_path, title, description, job_id=JOB_ID):
     global highlight_count
-    s3_cloud = CloudStorageClient()
     segments = []
     tmp_files = []
 
@@ -138,20 +136,15 @@ def concatenate_highlight(prev_path, curr_path, next_path, title, description, j
             if os.path.exists(f):
                 os.remove(f)
 
-        # --- thumbnail + upload + cleanup (same as your code) ---
+        # --- thumbnail + metadata, kept on local disk ---
+        # Highlights are no longer uploaded to S3: the local file paths are sent
+        # in the callback instead, so the files must NOT be deleted afterwards.
         thumbnail_path = output_path.replace('.mp4', '.jpg')
         generate_thumbnail(output_path, thumbnail_path)
 
         highlight_count += 1
-        highlight_folder = f"{S3_PREFIX}/{job_id}/highlights_{highlight_count}"
-        s3_key = f"{highlight_folder}/{filename}"
 
-        # Upload with error handling - don't crash on S3 timeout
         try:
-            logger.info("Uploading highlight to S3: %s", s3_key)
-            highlight_url = s3_cloud.upload_to_s3(output_path, s3_key)
-            thumbnail_url = s3_cloud.upload_to_s3(thumbnail_path, s3_key.replace('.mp4', '.jpg'))
-
             metadata = {
                 "title": title,
                 "description": description,
@@ -160,28 +153,19 @@ def concatenate_highlight(prev_path, curr_path, next_path, title, description, j
             metadata_path = output_path.replace('.mp4', '.json')
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f)
-            metadata_s3_key = s3_key.replace('.mp4', '.json')
-            metadata_url = s3_cloud.upload_to_s3(metadata_path, metadata_s3_key)
 
-            logger.info("Highlight saved: %s", highlight_url)
-            logger.info("Thumbnail saved: %s", thumbnail_url)
-            logger.info("Metadata saved: %s", metadata_url)
+            highlight_path = os.path.abspath(output_path)
+            thumbnail_path = os.path.abspath(thumbnail_path)
+            metadata_path = os.path.abspath(metadata_path)
 
-            # Cleanup local files only if upload succeeded
-            try:
-                os.remove(output_path)
-                os.remove(thumbnail_path)
-                os.remove(metadata_path)
-                logger.info("Deleted local files: %s, %s, %s", output_path, thumbnail_path, metadata_path)
-            except Exception as e:
-                logger.error("Error deleting local files: %s", e)
+            logger.info("Highlight saved: %s", highlight_path)
+            logger.info("Thumbnail saved: %s", thumbnail_path)
+            logger.info("Metadata saved: %s", metadata_path)
 
-            return highlight_url, thumbnail_url, metadata_url, filename
+            return highlight_path, thumbnail_path, metadata_path, filename
 
         except Exception as e:
-            # S3 upload failed - log error but keep processing
-            logger.error("Failed to upload highlight to S3: %s. Continuing with next chunk.", e)
-            # Return None tuple to indicate failure
+            logger.error("Failed to save highlight files locally: %s. Continuing with next chunk.", e)
             return None, None, None, None
 
     # Must match the 4-tuple above: the caller unpacks four names, so returning a
@@ -210,7 +194,6 @@ def main_loop(stop_event: Event = None, job_id: str = None, stream_url: str = No
     if stream_url is None:
         stream_url = STREAM_URL
     logger.info("//***************** Starting highlight detection for Job ID: %s *****************//", job_id)
-    s3_cloud = CloudStorageClient()
 
     # S3 cleanup disabled: not mandatory for operation
     # (can cause timeout issues on slow networks)
@@ -262,13 +245,13 @@ def main_loop(stop_event: Event = None, job_id: str = None, stream_url: str = No
                     break
                 highlight, title, description = is_highlight(transcript)
                 if highlight:
-                    highlight_url, thumbnail_url, metadata_url, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description, job_id)
-                    if highlight_url and thumbnail_url and metadata_url:
-                        logger.info("Highlight detected and uploaded: %s (%s)", title, highlight_url)
+                    highlight_path, thumbnail_path, metadata_path, fname = concatenate_highlight(prev_path, curr_path, next_path, title, description, job_id)
+                    if highlight_path and thumbnail_path and metadata_path:
+                        logger.info("Highlight detected and saved: %s (%s)", title, highlight_path)
                         highlight_key = f"highlight_{highlight_count}"
                         callback_data = {
-                            "video_url": highlight_url,
-                            "thumbnail_img": thumbnail_url,
+                            "video_url": highlight_path,
+                            "thumbnail_img": thumbnail_path,
                             "title": title,
                             "description": description
                         }
@@ -278,7 +261,7 @@ def main_loop(stop_event: Event = None, job_id: str = None, stream_url: str = No
                         logger.info("Highlight data updated: %s", highlight_data)
                         send_callback_to_server(job_id, highlight_data)
                     else:
-                        logger.warning("Highlight detected but S3 upload failed: %s. Skipping callback.", title)
+                        logger.warning("Highlight detected but files could not be saved: %s. Skipping callback.", title)
                 else:
                     logger.info("No highlight detected.")
                 total_time += CHUNK_DURATION
