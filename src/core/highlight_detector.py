@@ -53,9 +53,9 @@ def fix_mp4(input_path):
     output_path = input_path.replace(".mp4", "_fixed.mp4")
     try:
         subprocess.run([
-            "ffmpeg", "-y", "-i", input_path,
+            "ffmpeg", "-nostdin", "-y", "-i", input_path,
             "-c", "copy", "-movflags", "faststart", output_path
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ], check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return output_path
     except Exception as e:
         logger.error("[FFmpeg Remux Error] %s: %s", input_path, e)
@@ -67,19 +67,19 @@ def _get_duration(path):
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, text=True
+        stdin=subprocess.DEVNULL, capture_output=True, text=True
     )
     return float(result.stdout.strip())
 
 def _trim_clip(input_path, output_path, start=None, end=None):
     """Trim a video clip using ffmpeg."""
-    cmd = ["ffmpeg", "-y", "-i", input_path]
+    cmd = ["ffmpeg", "-nostdin", "-y", "-i", input_path]
     if start is not None:
         cmd += ["-ss", str(start)]
     if end is not None:
         cmd += ["-t", str(end - (start or 0))]
     cmd += ["-c", "copy", output_path]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def concatenate_highlight(prev_path, curr_path, next_path, title, description, job_id=JOB_ID):
     global highlight_count
@@ -128,10 +128,10 @@ def concatenate_highlight(prev_path, curr_path, next_path, title, description, j
         # Concatenate using ffmpeg concat protocol (works natively with .ts files)
         concat_input = "|".join(segments)
         subprocess.run([
-            "ffmpeg", "-y", "-i", f"concat:{concat_input}",
+            "ffmpeg", "-nostdin", "-y", "-i", f"concat:{concat_input}",
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "faststart",
             output_path
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ], check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         # Clean up temp trimmed files
         for f in tmp_files:
